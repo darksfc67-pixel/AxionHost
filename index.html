@@ -18,7 +18,7 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
 const modals = [...document.querySelectorAll(".modal")];
-document.querySelectorAll("[data-modal]").forEach(b => b.addEventListener("click", () => document.getElementById(b.dataset.modal).classList.add("show")));
+document.querySelectorAll("[data-modal]").forEach(b => b.addEventListener("click", () => { if (b.dataset.modal === "login" && currentUser) { openDashboard(); return; } document.getElementById(b.dataset.modal).classList.add("show"); }));
 document.querySelectorAll(".close").forEach(b => b.addEventListener("click", () => b.closest(".modal").classList.remove("show")));
 modals.forEach(m => m.addEventListener("click", e => { if (e.target === m) m.classList.remove("show"); }));
 document.addEventListener("keydown", e => { if (e.key === "Escape") modals.forEach(m => m.classList.remove("show")); });
@@ -100,7 +100,6 @@ onAuthStateChanged(auth, user => {
   if (user) {
     navButton.textContent = "Mi panel";
     navButton.onclick = () => { modals.forEach(m => m.classList.remove("show")); openDashboard(); };
-    navButton.dataset.authenticated = "true";
     navButton.dataset.authenticated = "true";
   } else {
     navButton.textContent = "Iniciar sesión";
