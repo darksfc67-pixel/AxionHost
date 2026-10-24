@@ -6,6 +6,8 @@
   <div class="config-title">⚙ CONFIGURACIÓN DEL SERVER</div>
   <h3 style="margin:8px 0">Personaliza tu mundo</h3>
   <p class="note">Completa los datos de tu servidor Minecraft Bedrock. Los campos con * son obligatorios.</p>
+  <div class="msg" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><span id="hostingConnectionStatus">Hosting real: backend sin configurar</span><button class="btn secondary" type="button" id="configureHostingBackend" style="padding:9px 12px">🔌 Conectar backend</button></div>
+  <p class="note">La portada y el banner son solo vista previa por ahora; el backend recibe el nombre y la descripción.</p>
   <form id="serverConfigForm">
     <div class="config-grid">
       <div class="config-field full"><label for="serverName">NOMBRE DEL SERVIDOR *</label><input id="serverName" maxlength="32" required placeholder="Ej. AxionSurvival" autocomplete="off"><p class="note">Máximo 32 caracteres. Puedes usar los símbolos de abajo.</p></div>
@@ -217,14 +219,38 @@ const survivalTips = [
   "Lleva bloques baratos para cruzar huecos y escapar de situaciones peligrosas.",
   "Guarda hierro y carbón; una reserva te facilita crear herramientas y antorchas."
 ];
+let axionHostingApiUrl = "";
+try { axionHostingApiUrl = localStorage.getItem("axionhost_worker_url") || ""; } catch {}
+function updateHostingConnection() {
+  const el = document.getElementById("hostingConnectionStatus");
+  if (!el) return;
+  el.textContent = axionHostingApiUrl ? "Hosting backend configurado · " + new URL(axionHostingApiUrl).host : "Hosting real: backend sin configurar";
+}
+document.getElementById("configureHostingBackend").addEventListener("click", () => {
+  const value = window.prompt("Pega la URL HTTPS de tu Worker de AxionHost (sin /api/servers). No pegues claves secretas aquí.", axionHostingApiUrl);
+  if (value === null) return;
+  const cleaned = value.trim().replace(/\/$/, "");
+  if (cleaned && !/^https:\/\//i.test(cleaned)) { alert("La URL debe comenzar con https://"); return; }
+  axionHostingApiUrl = cleaned;
+  try { if (cleaned) localStorage.setItem("axionhost_worker_url", cleaned); else localStorage.removeItem("axionhost_worker_url"); } catch {}
+  updateHostingConnection();
+});
+updateHostingConnection();
+
 document.getElementById("serverConfigForm").addEventListener("submit", async e => {
   e.preventDefault();
   const name = document.getElementById("serverName").value.trim();
   const description = document.getElementById("serverDescription").value.trim();
   const msg = document.getElementById("configMsg");
   if (!name || !description) { msg.textContent = "Completa el nombre y la descripción de tu servidor."; return; }
+  if (!currentUser) { msg.textContent = "Inicia sesión para crear tu servidor."; document.getElementById("login").classList.add("show"); return; }
+  if (!axionHostingApiUrl) {
+    msg.textContent = "Primero conecta el backend de Cloudflare con el botón «Conectar backend». Sigue AXIONHOST_REAL_HOSTING.md.";
+    return;
+  }
+
   const btn = document.getElementById("createServerBtn");
-  btn.disabled = true; btn.textContent = "PREPARANDO...";
+  btn.disabled = true; btn.textContent = "CONECTANDO...";
   const overlay = document.getElementById("serverLoading");
   const progress = document.getElementById("serverProgress");
   const percent = document.getElementById("loadingPercent");
@@ -233,30 +259,43 @@ document.getElementById("serverConfigForm").addEventListener("submit", async e =
   const foot = document.getElementById("loadingFoot");
   const ring = document.getElementById("loadingRing");
   const closeBtn = document.getElementById("closeLoading");
-  const stages = ["Validando la configuración...","Preparando el perfil de tu mundo...","Organizando recursos del plan...","Comprobando el sistema de alojamiento..."];
-  let value = 0;
   document.getElementById("survivalTip").textContent = survivalTips[Math.floor(Math.random()*survivalTips.length)];
-  title.textContent = "Preparando tu servidor...";
-  subtitle.textContent = "Validando el nombre y la configuración.";
-  foot.textContent = "Esta pantalla de carga es parte de la interfaz. El motor real de alojamiento aún debe conectarse.";
+  title.textContent = "Conectando con el hosting...";
+  subtitle.textContent = "Validando tu sesión y enviando la configuración.";
+  foot.textContent = "El servidor solo se creará si el backend y el proveedor están configurados correctamente.";
+  progress.style.width = "12%"; percent.textContent = "12%";
   ring.style.display = ""; closeBtn.style.display = "none"; overlay.classList.add("active");
-  const timer = setInterval(() => {
-    value = Math.min(100, value + Math.floor(Math.random()*8)+4);
-    progress.style.width = value + "%"; percent.textContent = value + "%";
-    subtitle.textContent = stages[Math.min(stages.length-1, Math.floor(value/27))];
-    if (value >= 100) {
-      clearInterval(timer);
-      title.textContent = "¡Configuración preparada!";
-      subtitle.textContent = "Los datos de tu servidor están listos para el siguiente paso.";
-      ring.style.display = "none";
-      foot.textContent = "Importante: todavía no se ha creado un servidor Minecraft real. Para hacerlo, AxionHost necesita conectarse a un proveedor de hosting mediante un backend seguro.";
-      closeBtn.style.display = "block";
-      btn.disabled = false; btn.textContent = "🚀 CREAR SERVIDOR";
-      const saved = {name,description,plan:chosenPlan,cover:document.getElementById("serverCover").files?.[0]?.name || "",banner:document.getElementById("serverBanner").files?.[0]?.name || ""};
-      document.getElementById("dashMsg").textContent = "Configuración preparada para: " + saved.name + " (vista previa; aún no alojado).";
-      try { sessionStorage.setItem("axionhost_server_draft", JSON.stringify(saved)); } catch {}
-    }
-  }, 180);
+  try {
+    const token = await currentUser.getIdToken();
+    progress.style.width = "45%"; percent.textContent = "45%";
+    subtitle.textContent = "Solicitando un servidor real al proveedor...";
+    const response = await fetch(axionHostingApiUrl.replace(/\/$/, "") + "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+      body: JSON.stringify({ name, description, plan: chosenPlan })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Error del hosting (HTTP " + response.status + ")"));
+    progress.style.width = "100%"; percent.textContent = "100%";
+    title.textContent = "¡Servidor enviado al proveedor!";
+    subtitle.textContent = "El proveedor aceptó la creación del servidor.";
+    ring.style.display = "none";
+    const server = data.server || {};
+    const address = server.joinAddress || (server.address && server.port ? server.address + ":" + server.port : "");
+    foot.textContent = "Servidor: " + (server.name || name) + (address ? " · Dirección: " + address : "") + " · Estado: " + (server.status || "procesando instalación") + ".";
+    document.getElementById("dashMsg").textContent = "Solicitud real aceptada para " + (server.name || name) + (address ? " · " + address : "") + ".";
+    msg.textContent = "Creación aceptada por el proveedor. El servidor puede tardar en instalarse.";
+    try { sessionStorage.setItem("axionhost_server_draft", JSON.stringify({name, description, plan: chosenPlan, server})); } catch {}
+  } catch (error) {
+    title.textContent = "No se pudo crear el servidor";
+    subtitle.textContent = error.message || "Error de conexión con el backend.";
+    ring.style.display = "none";
+    foot.textContent = "No se ha simulado una creación exitosa. Revisa AXIONHOST_REAL_HOSTING.md y los logs del Worker.";
+    msg.textContent = error.message || "Error al conectar con el hosting.";
+  } finally {
+    closeBtn.style.display = "block";
+    btn.disabled = false; btn.textContent = "🚀 CREAR SERVIDOR";
+  }
 });
 document.getElementById("closeLoading").addEventListener("click", () => {
   document.getElementById("serverLoading").classList.remove("active");
